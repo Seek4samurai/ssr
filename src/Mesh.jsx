@@ -1,57 +1,103 @@
 import { useEffect, useRef } from "react";
-import * as PIXI from "pixi.js";
 import { loadCoords } from "./functions/loadcsv";
 
 export default function Mesh() {
-  const containerRef = useRef(null);
-  const appRef = useRef(null);
+  const canvasRef = useRef(null);
 
   useEffect(() => {
-    const initPixi = async () => {
-      const app = new PIXI.Application();
+    const run = async () => {
+      const canvas = canvasRef.current;
+      const gl = canvas.getContext("webgl");
 
-      await app.init({
-        resizeTo: containerRef.current,
-        backgroundColor: 0x6b727f,
-        resolution: window.devicePixelRatio || 1,
-        antialias: false, // Turn off for better performance with 0M points
-      });
+      // Resize
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = canvas.clientWidth * dpr;
+      canvas.height = canvas.clientHeight * dpr;
+      gl.viewport(0, 0, canvas.width, canvas.height);
 
-      appRef.current = app;
-      containerRef.current.appendChild(app.canvas);
+      const coords = await loadCoords(); // Float32Array [-1..1]
 
-      const coords = await loadCoords();
+      // ---- SHADERS ----
+      const vs = `
+        attribute vec2 aPos;
+        uniform float uTime;
 
-      const dot = new PIXI.Graphics().circle(1, 1, 1).fill(0x60a5f9);
+        void main() {
+          vec2 pos = aPos;
 
-      const texture = app.renderer.generateTexture(dot);
+          // subtle wave animation
+          pos.y += sin(uTime + aPos.x * 10.0) * 0.02;
+          pos.x += cos(uTime + aPos.y * 10.0) * 0.02;
 
-      const w = app.screen.width;
-      const h = app.screen.height;
+          gl_Position = vec4(pos, 0.0, 1.0);
+          gl_PointSize = 2.0;
+        }
+      `;
 
-      for (let i = 0; i < 10000; i += 2) {
-        const s = new PIXI.Sprite(texture);
-        s.x = (coords[i] + 1) * 0.5 * w;
-        s.y = (coords[i + 1] + 1) * 0.5 * h;
-        app.stage.addChild(s);
-      }
+      const fs = `
+        precision mediump float;
+        void main() {
+          gl_FragColor = vec4(0.38, 0.65, 0.98, 1.0);
+        }
+      `;
+
+      const compile = (type, src) => {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      };
+
+      const program = gl.createProgram();
+      gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(program);
+      gl.useProgram(program);
+
+      const timeLoc = gl.getUniformLocation(program, "uTime");
+
+      // ---- BUFFER ----
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STATIC_DRAW);
+
+      const loc = gl.getAttribLocation(program, "aPos");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      // ---- DRAW ----
+      gl.clearColor(0.42, 0.45, 0.5, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.POINTS, 0, coords.length / 2);
+
+      let start = performance.now();
+
+      const draw = () => {
+        const t = (performance.now() - start) * 0.001; // seconds
+
+        gl.clearColor(0.42, 0.45, 0.5, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.uniform1f(timeLoc, t);
+        gl.drawArrays(gl.POINTS, 0, coords.length / 2);
+
+        requestAnimationFrame(draw);
+      };
+
+      draw();
     };
 
-    initPixi();
-
-    return () => {
-      if (appRef.current) {
-        appRef.current.destroy(true, { children: true, texture: true });
-      }
-    };
+    run();
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full rounded-lg overflow-hidden bg-gray-501"
-      style={{ height: "99vh", width: "100vw" }}
-    />
+    <center className="w-full h-full flex justify-center items-center">
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full rounded-2xl"
+        style={{ width: "95vw", height: "90vh" }}
+      />
+    </center>
   );
 }
 
