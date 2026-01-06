@@ -34,8 +34,15 @@ export function mapSongsToPoints(songs) {
   }));
 }
 
+// export async function loadCoords() {
+//   const res = await fetch("http://localhost:8000/songs/coords");
+//   const buffer = await res.arrayBuffer();
+//   return new Float32Array(buffer); // 2 floats per song
+// }
+
 export async function loadCoords() {
-  const res = await fetch("http://localhost:8000/songs/coords");
+  const res = await fetch("http://localhost:8000/songs/coords?t=" + Date.now());
   const buffer = await res.arrayBuffer();
-  return new Float32Array(buffer); // 2 floats per song
+  const data = new Float32Array(buffer);
+  return data;
 }

@@ -8,6 +8,7 @@ export default function Mesh() {
     x: 0.0,
     y: 0.0,
     scale: 0.5,
+    targetScale: 0.5,
     isDragging: false,
     lastMouse: { x: 0, y: 0 },
   });
@@ -99,14 +100,18 @@ export default function Mesh() {
     const aspectLoc = gl.getUniformLocation(program, "uAspect");
     const offsetLoc = gl.getUniformLocation(program, "uOffset");
     const scaleLoc = gl.getUniformLocation(program, "uScale");
+    const dataLoc = gl.getAttribLocation(program, "aData");
 
     // --- INTERACTION EVENTS ---
     const handleWheel = (e) => {
       e.preventDefault();
-      const zoomSpeed = 0.1;
-      // Scroll up to zoom in, down to zoom out
-      const factor = e.deltaY > 0 ? 1 - zoomSpeed : 1 + zoomSpeed;
-      transform.current.scale *= factor;
+      // const zoomSpeed = 0.1;
+      const zoomSpeed = 0.005; // smaller = smoother
+      transform.current.targetScale *= Math.exp(-e.deltaY * zoomSpeed);
+      transform.current.targetScale = Math.min(
+        50,
+        Math.max(0.25, transform.current.targetScale)
+      );
     };
 
     const handleMouseDown = (e) => {
@@ -122,9 +127,9 @@ export default function Mesh() {
 
       // Adjust pan sensitivity based on scale
       transform.current.x +=
-        ((dx / canvas.clientWidth) * 2.0) / transform.current.scale;
+        ((dx / canvas.clientWidth) * 1.0) / transform.current.scale;
       transform.current.y -=
-        ((dy / canvas.clientHeight) * 2.0) / transform.current.scale;
+        ((dy / canvas.clientHeight) * 1.0) / transform.current.scale;
 
       transform.current.lastMouse = { x: e.clientX, y: e.clientY };
     };
@@ -141,31 +146,32 @@ export default function Mesh() {
     const run = async () => {
       const coordsRaw = await loadCoords();
       const numPointsToUse = 500000;
-      const coords = new Float32Array(numPointsToUse * 3);
-
-      for (let i = 0; i < numPointsToUse; i++) {
-        coords[i * 3 + 0] = coordsRaw[i * 3 + 0];
-        coords[i * 3 + 1] = coordsRaw[i * 3 + 1];
-        coords[i * 3 + 2] = coordsRaw[i * 3 + 2];
-      }
 
       const buffer = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, coords, gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, coordsRaw, gl.STATIC_DRAW);
 
-      const loc = gl.getAttribLocation(program, "aData");
-      gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(dataLoc);
+      gl.vertexAttribPointer(dataLoc, 3, gl.FLOAT, false, 0, 0);
 
       const render = () => {
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = canvas.clientWidth * dpr;
-        canvas.height = canvas.clientHeight * dpr;
-        gl.viewport(0, 0, canvas.width, canvas.height);
+        if (canvas.width !== canvas.clientWidth * dpr) {
+          canvas.width = canvas.clientWidth * dpr;
+          canvas.height = canvas.clientHeight * dpr;
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
 
-        gl.clearColor(0.42, 0.45, 0.6, 1.0);
+        gl.clearColor(0.1, 0.1, 0.1, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
+        // smooth zoom
+        const t = transform.current;
+        t.scale += (t.targetScale - t.scale) * 0.05;
+
+        gl.useProgram(program);
+
+        // Now these locations are guaranteed to be from the "associated program"
         gl.uniform1f(aspectLoc, canvas.width / canvas.height);
         gl.uniform2f(offsetLoc, transform.current.x, transform.current.y);
         gl.uniform1f(scaleLoc, transform.current.scale);
