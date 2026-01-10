@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import Crosshair from "./Components/Crosshair";
 import { loadCoords } from "./functions/loadcsv";
 
 export default function Mesh() {
   const canvasRef = useRef(null);
   const [coords, setCoords] = useState({ x: 0, y: 0 });
+  const [visibleBoxes, setVisibleBoxes] = useState([]);
+  const [currentZoom, setCurrentZoom] = useState(0.5);
 
   function clampPan(t) {
-    // Allow the offset to go slightly further so corners aren't stuck off-screen
     const limit = 2;
     t.x = Math.min(limit, Math.max(-limit, t.x));
     t.y = Math.min(limit, Math.max(-limit, t.y));
@@ -20,6 +22,36 @@ export default function Mesh() {
     isDragging: false,
     lastMouse: { x: 0, y: 0 },
   });
+
+  // --- SIMPLE BOX CALCULATION ---
+  const calculateVisibleBoxes = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const t = transform.current;
+    const aspect = canvas.clientWidth / canvas.clientHeight;
+    const baseScale = 10.0;
+
+    const x1 = ((-1.0 * aspect) / (t.scale * baseScale) - t.x + 1.0) * 500;
+    const x2 = ((1.0 * aspect) / (t.scale * baseScale) - t.x + 1.0) * 500;
+    const y1 = (1.0 - (1.0 / (t.scale * baseScale) - t.y)) * 500;
+    const y2 = (1.0 - (-1.0 / (t.scale * baseScale) - t.y)) * 500;
+
+    // coordinates to Grid Indices (0-9)
+    const minGX = Math.max(0, Math.floor(x1 / 100));
+    const maxGX = Math.min(9, Math.floor(x2 / 100));
+    const minGY = Math.max(0, Math.floor(y1 / 100));
+    const maxGY = Math.min(9, Math.floor(y2 / 100));
+
+    // Collect unique Box IDs
+    let boxes = [];
+    for (let gx = minGX; gx <= maxGX; gx++) {
+      for (let gy = minGY; gy <= maxGY; gy++) {
+        boxes.push(`box_${gx}_${gy}`);
+      }
+    }
+    setVisibleBoxes(boxes);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -128,7 +160,6 @@ export default function Mesh() {
 
     const handleMouseMove = (e) => {
       if (!transform.current.isDragging) {
-        // Even if not dragging, calculate world pos for the HUD
         const rect = canvas.getBoundingClientRect();
         const mx = ((e.clientX - rect.left) / canvas.clientWidth) * 2 - 1;
         const my = -(((e.clientY - rect.top) / canvas.clientHeight) * 2 - 1);
@@ -136,7 +167,7 @@ export default function Mesh() {
         const aspect = canvas.width / canvas.height;
         const t = transform.current;
 
-        // same math as your Vertex Shader
+        // same the Vertex Shader
         const worldX = ((mx * aspect) / (t.scale * 8.0) - t.x + 1.0) * 500;
         const worldY = (1.0 - (my / (t.scale * 8.0) - t.y)) * 500;
 
@@ -194,6 +225,10 @@ export default function Mesh() {
         t.scale += (t.targetScale - t.scale) * 0.05;
         clampPan(transform.current);
 
+        if (Math.abs(t.scale - currentZoom) > 0.01) {
+          setCurrentZoom(t.scale);
+        }
+
         gl.useProgram(program);
 
         // Now these locations are guaranteed to be from the "associated program"
@@ -220,37 +255,58 @@ export default function Mesh() {
   }, []);
 
   return (
-    <div
-      style={{
-        position: "relative",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        width: "100vw",
-        height: "100vh",
-      }}
-    >
+    <div className="relative w-screen h-screen bg-neutral-950 flex items-center justify-center overflow-hidden font-sans">
+      {/* The WebGL Canvas */}
       <canvas
         ref={canvasRef}
-        className="rounded-2xl cursor-move touch-none"
-        style={{ width: "95vw", height: "95vh" }}
+        className="w-[95vw] h-[95vh] rounded-2xl cursor-move touch-none border border-white/5"
       />
 
-      <div
-        style={{
-          position: "absolute",
-          bottom: 20,
-          left: 20,
-          color: "white",
-          background: "rgba(0,0,0,0.5)",
-          padding: "10px",
-        }}
-      >
-        Song Space: {coords.x}, {coords.y}
-        <br />
-        {coords.x < 100 && coords.y < 100
-          ? "📍 Top-Left (Low Energy/Dance)"
-          : ""}
+      <Crosshair></Crosshair>
+
+      {/* Top-Right Box Info Panel */}
+      <div className="absolute top-9 right-15 w-64 bg-black/60 backdrop-blur-sm border border-white/10 p-4 rounded-xl text-white shadow-xl">
+        <h3 className="text-sm font-bold tracking-widest uppercase text-blue-400 mb-2">
+          Spatial Index
+        </h3>
+
+        <button
+          onClick={calculateVisibleBoxes}
+          className="w-full p-1 mb-2 bg-white/10 hover:bg-white/20 active:scale-95 transition-all rounded-lg text-xs font-semibold border border-white/20"
+        >
+          IDENTIFY BOXES
+        </button>
+
+        <div className="space-y-2">
+          <div className="flex justify-between text-[10px] text-neutral-400 uppercase">
+            <span>Active Segments</span>
+            <span>{visibleBoxes.length} Total</span>
+          </div>
+          <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+            {visibleBoxes.length > 0 ? (
+              visibleBoxes.map((id) => (
+                <span
+                  key={id}
+                  className="px-2 py-1 bg-blue-500/20 border border-blue-500/30 text-blue-300 text-[10px] rounded"
+                >
+                  {id}
+                </span>
+              ))
+            ) : (
+              <span className="text-neutral-500 text-[10px] italic">
+                No segments identified
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom-Left Coordinate HUD */}
+      <div className="absolute bottom-10 left-15 bg-black/60 backdrop-blur-sm px-4 py-2 rounded-lg border border-white/5 text-white/80 text-xs font-mono shadow-lg">
+        <span className="text-blue-400">POS:</span> {coords.x}, {coords.y}
+        <span className="mx-2 text-white/20">|</span>
+        <span className="text-emerald-400">ZOOM:</span> {currentZoom.toFixed(2)}
+        x
       </div>
     </div>
   );
